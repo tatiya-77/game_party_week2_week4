@@ -1,0 +1,400 @@
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final _email = TextEditingController();
+  final _password = TextEditingController();
+  final _displayName = TextEditingController();
+
+  bool _isRegister = false;
+  bool _isBusy = false;
+  bool _obscurePassword = true;
+
+  @override
+  void dispose() {
+    _email.dispose();
+    _password.dispose();
+    _displayName.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final email = _email.text.trim();
+    final password = _password.text;
+    final displayName = _displayName.text.trim();
+
+    if (email.isEmpty || password.isEmpty) {
+      _showMessage('กรุณากรอกอีเมลและรหัสผ่าน');
+      return;
+    }
+
+    if (_isRegister && displayName.isEmpty) {
+      _showMessage('กรุณากรอกชื่อที่แสดง');
+      return;
+    }
+
+    setState(() {
+      _isBusy = true;
+    });
+
+    try {
+      final auth = FirebaseAuth.instance;
+
+      if (_isRegister) {
+        final credential = await auth.createUserWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
+
+        await credential.user?.updateDisplayName(displayName);
+
+        if (mounted) {
+          _showMessage('สมัครสมาชิกสำเร็จ 🎉');
+        }
+      } else {
+        await auth.signInWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
+      }
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+
+      String message;
+
+      switch (e.code) {
+        case 'invalid-email':
+          message = 'รูปแบบอีเมลไม่ถูกต้อง';
+          break;
+
+        case 'user-not-found':
+          message = 'ไม่พบบัญชีนี้';
+          break;
+
+        case 'wrong-password':
+        case 'invalid-credential':
+          message = 'อีเมลหรือรหัสผ่านไม่ถูกต้อง';
+          break;
+
+        case 'email-already-in-use':
+          message = 'อีเมลนี้ถูกใช้งานแล้ว';
+          break;
+
+        case 'weak-password':
+          message = 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร';
+          break;
+
+        case 'network-request-failed':
+          message = 'ไม่สามารถเชื่อมต่ออินเทอร์เน็ตได้';
+          break;
+
+        default:
+          message = e.message ?? 'ดำเนินการไม่สำเร็จ';
+      }
+
+      _showMessage(message);
+    } catch (e) {
+      if (mounted) {
+        _showMessage('เกิดข้อผิดพลาด กรุณาลองใหม่');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isBusy = false;
+        });
+      }
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+      );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF7F7FB),
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxWidth: 430,
+              ),
+              child: Column(
+                children: [
+                  // =====================================================
+                  // Logo
+                  // =====================================================
+                  Container(
+                    width: 86,
+                    height: 86,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF6C63FF),
+                      borderRadius: BorderRadius.circular(26),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF6C63FF).withValues(
+                            alpha: 0.20,
+                          ),
+                          blurRadius: 24,
+                          offset: const Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.groups_rounded,
+                      color: Colors.white,
+                      size: 46,
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // =====================================================
+                  // Title
+                  // =====================================================
+                  Text(
+                    'Game Party',
+                    style: theme.textTheme.headlineMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: const Color(0xFF252525),
+                    ),
+                  ),
+
+                  const SizedBox(height: 6),
+
+                  Text(
+                    _isRegister
+                        ? 'สร้างบัญชีแล้วมาเล่นด้วยกัน 🎮'
+                        : 'เข้าสู่ระบบเพื่อพบเพื่อนใน Game Party',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.grey,
+                      fontSize: 14,
+                    ),
+                  ),
+
+                  const SizedBox(height: 28),
+
+                  // =====================================================
+                  // Login Card
+                  // =====================================================
+                  Card(
+                    elevation: 0,
+                    color: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(22),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            _isRegister
+                                ? 'สมัครสมาชิก'
+                                : 'เข้าสู่ระบบ',
+                            style: theme.textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+
+                          const SizedBox(height: 20),
+
+                          // =================================================
+                          // Display Name
+                          // =================================================
+                          if (_isRegister) ...[
+                            TextField(
+                              controller: _displayName,
+                              textInputAction: TextInputAction.next,
+                              decoration: InputDecoration(
+                                labelText: 'ชื่อที่แสดง',
+                                hintText: 'เช่น Gamer123',
+                                prefixIcon: const Icon(
+                                  Icons.person_outline_rounded,
+                                ),
+                                filled: true,
+                                fillColor: const Color(0xFFF7F7FB),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                            ),
+
+                            const SizedBox(height: 14),
+                          ],
+
+                          // =================================================
+                          // Email
+                          // =================================================
+                          TextField(
+                            controller: _email,
+                            keyboardType: TextInputType.emailAddress,
+                            textInputAction: TextInputAction.next,
+                            decoration: InputDecoration(
+                              labelText: 'อีเมล',
+                              hintText: 'example@email.com',
+                              prefixIcon: const Icon(
+                                Icons.email_outlined,
+                              ),
+                              filled: true,
+                              fillColor: const Color(0xFFF7F7FB),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                borderSide: BorderSide.none,
+                              ),
+                            ),
+                          ),
+
+                          const SizedBox(height: 14),
+
+                          // =================================================
+                          // Password
+                          // =================================================
+                          TextField(
+                            controller: _password,
+                            obscureText: _obscurePassword,
+                            textInputAction: TextInputAction.done,
+                            onSubmitted: (_) {
+                              if (!_isBusy) {
+                                _submit();
+                              }
+                            },
+                            decoration: InputDecoration(
+                              labelText: 'รหัสผ่าน',
+                              hintText: 'อย่างน้อย 6 ตัวอักษร',
+                              prefixIcon: const Icon(
+                                Icons.lock_outline_rounded,
+                              ),
+                              suffixIcon: IconButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _obscurePassword =
+                                        !_obscurePassword;
+                                  });
+                                },
+                                icon: Icon(
+                                  _obscurePassword
+                                      ? Icons.visibility_outlined
+                                      : Icons.visibility_off_outlined,
+                                ),
+                              ),
+                              filled: true,
+                              fillColor: const Color(0xFFF7F7FB),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                borderSide: BorderSide.none,
+                              ),
+                            ),
+                          ),
+
+                          const SizedBox(height: 22),
+
+                          // =================================================
+                          // Submit Button
+                          // =================================================
+                          SizedBox(
+                            height: 52,
+                            child: FilledButton(
+                              onPressed: _isBusy ? null : _submit,
+                              style: FilledButton.styleFrom(
+                                backgroundColor:
+                                    const Color(0xFF6C63FF),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius:
+                                      BorderRadius.circular(16),
+                                ),
+                              ),
+                              child: _isBusy
+                                  ? const SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child:
+                                          CircularProgressIndicator(
+                                        strokeWidth: 2.5,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : Text(
+                                      _isRegister
+                                          ? 'สมัครสมาชิก'
+                                          : 'เข้าสู่ระบบ',
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                            ),
+                          ),
+
+                          const SizedBox(height: 10),
+
+                          // =================================================
+                          // Switch Login/Register
+                          // =================================================
+                          TextButton(
+                            onPressed: _isBusy
+                                ? null
+                                : () {
+                                    setState(() {
+                                      _isRegister = !_isRegister;
+                                    });
+                                  },
+                            child: Text(
+                              _isRegister
+                                  ? 'มีบัญชีแล้ว? เข้าสู่ระบบ'
+                                  : 'ยังไม่มีบัญชี? สมัครสมาชิก',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 18),
+
+                  const Text(
+                    'Game Party • Play • Meet • Have Fun 🎮',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.grey,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
