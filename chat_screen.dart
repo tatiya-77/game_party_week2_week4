@@ -14,7 +14,6 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
-
   final _messagesRef = FirebaseFirestore.instance.collection('messages');
 
   bool _isSending = false;
@@ -26,6 +25,47 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
+  // แปลง Firebase error เป็นข้อความภาษาไทยที่เข้าใจง่าย
+  String _getErrorMessage(Object error, {String action = 'ดำเนินการ'}) {
+    if (error is FirebaseException) {
+      switch (error.code) {
+        case 'permission-denied':
+          return 'คุณไม่มีสิทธิ์ในการดำเนินการนี้';
+        case 'unauthenticated':
+          return 'กรุณาเข้าสู่ระบบใหม่อีกครั้ง';
+        case 'unavailable':
+        case 'deadline-exceeded':
+          return 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ กรุณาตรวจสอบอินเทอร์เน็ต';
+        case 'not-found':
+          return 'ไม่พบข้อมูลที่ต้องการ';
+        case 'resource-exhausted':
+          return 'มีการใช้งานระบบมากเกินไป กรุณาลองใหม่ภายหลัง';
+        case 'cancelled':
+          return 'การดำเนินการถูกยกเลิก';
+        case 'failed-precondition':
+          return 'ระบบยังไม่พร้อมใช้งาน กรุณาลองใหม่ภายหลัง';
+        default:
+          return 'ไม่สามารถ$actionได้ กรุณาลองใหม่อีกครั้ง';
+      }
+    }
+
+    return 'เกิดข้อผิดพลาดที่ไม่คาดคิด กรุณาลองใหม่อีกครั้ง';
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
+  // ส่งข้อความ
   Future<void> _sendMessage() async {
     final text = _controller.text.trim();
 
@@ -34,13 +74,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final user = FirebaseAuth.instance.currentUser;
 
     if (user == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('กรุณาเข้าสู่ระบบก่อนส่งข้อความ'),
-          ),
-        );
-      }
+      _showMessage('กรุณาเข้าสู่ระบบก่อนส่งข้อความ');
       return;
     }
 
@@ -58,29 +92,24 @@ class _ChatScreenState extends State<ChatScreen> {
         'createdAt': FieldValue.serverTimestamp(),
       });
 
+      if (!mounted) return;
+
       _controller.clear();
 
-      if (mounted) {
-        Future.delayed(const Duration(milliseconds: 150), () {
-          if (!_scrollController.hasClients) return;
+      // เลื่อนไปยังข้อความล่าสุด
+      Future.delayed(const Duration(milliseconds: 200), () {
+        if (!mounted || !_scrollController.hasClients) return;
 
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        });
-      }
-    } on FirebaseException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              e.message ?? 'ไม่สามารถส่งข้อความได้',
-            ),
-          ),
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
         );
-      }
+      });
+    } on FirebaseException catch (e) {
+      _showMessage(_getErrorMessage(e, action: 'ส่งข้อความ'));
+    } catch (e) {
+      _showMessage('ส่งข้อความไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
     } finally {
       if (mounted) {
         setState(() {
@@ -90,41 +119,53 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  // แปลงเวลา
   String _formatTime(Timestamp? timestamp) {
     if (timestamp == null) return '';
 
     final date = timestamp.toDate();
-
     final hour = date.hour.toString().padLeft(2, '0');
     final minute = date.minute.toString().padLeft(2, '0');
 
     return '$hour:$minute น.';
   }
 
+  // ลบข้อความ
   Future<void> _deleteMessage(String messageId) async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      _showMessage('กรุณาเข้าสู่ระบบใหม่อีกครั้ง');
+      return;
+    }
+
     try {
+      // ตรวจสอบว่าเป็นข้อความของผู้ใช้ปัจจุบัน
+      final doc = await _messagesRef.doc(messageId).get();
+
+      if (!doc.exists) {
+        _showMessage('ไม่พบข้อความนี้ อาจถูกลบไปแล้ว');
+        return;
+      }
+
+      final data = doc.data();
+
+      if (data == null || data['uid'] != user.uid) {
+        _showMessage('คุณไม่มีสิทธิ์ลบข้อความนี้');
+        return;
+      }
+
       await _messagesRef.doc(messageId).delete();
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('ลบข้อความแล้ว'),
-          ),
-        );
-      }
+      _showMessage('ลบข้อความแล้ว');
     } on FirebaseException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              e.message ?? 'ไม่สามารถลบข้อความได้',
-            ),
-          ),
-        );
-      }
+      _showMessage(_getErrorMessage(e, action: 'ลบข้อความ'));
+    } catch (e) {
+      _showMessage('ลบข้อความไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
     }
   }
 
+  // เมนูข้อความ
   void _showMessageMenu(
     BuildContext context,
     String messageId,
@@ -135,7 +176,7 @@ class _ChatScreenState extends State<ChatScreen> {
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
-      builder: (context) {
+      builder: (sheetContext) {
         return SafeArea(
           child: ListTile(
             leading: const Icon(
@@ -144,11 +185,11 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             title: const Text('ลบข้อความ'),
             onTap: () async {
-              Navigator.pop(context);
+              Navigator.pop(sheetContext);
 
               final confirm = await showDialog<bool>(
                 context: context,
-                builder: (context) {
+                builder: (dialogContext) {
                   return AlertDialog(
                     title: const Text('ลบข้อความ'),
                     content: const Text(
@@ -157,13 +198,13 @@ class _ChatScreenState extends State<ChatScreen> {
                     actions: [
                       TextButton(
                         onPressed: () {
-                          Navigator.pop(context, false);
+                          Navigator.pop(dialogContext, false);
                         },
                         child: const Text('ยกเลิก'),
                       ),
                       FilledButton(
                         onPressed: () {
-                          Navigator.pop(context, true);
+                          Navigator.pop(dialogContext, true);
                         },
                         child: const Text('ลบ'),
                       ),
@@ -182,6 +223,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  // กล่องข้อความ
   Widget _buildMessageBubble(
     BuildContext context,
     QueryDocumentSnapshot<Map<String, dynamic>> doc,
@@ -198,12 +240,10 @@ class _ChatScreenState extends State<ChatScreen> {
         timestamp is Timestamp ? timestamp : null;
 
     final bool isMine = uid == currentUid;
-
     final colorScheme = Theme.of(context).colorScheme;
 
     return Align(
-      alignment:
-          isMine ? Alignment.centerRight : Alignment.centerLeft,
+      alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
       child: GestureDetector(
         onLongPress: () {
           _showMessageMenu(
@@ -216,9 +256,7 @@ class _ChatScreenState extends State<ChatScreen> {
           constraints: BoxConstraints(
             maxWidth: MediaQuery.of(context).size.width * 0.78,
           ),
-          margin: const EdgeInsets.only(
-            bottom: 10,
-          ),
+          margin: const EdgeInsets.only(bottom: 10),
           padding: const EdgeInsets.symmetric(
             horizontal: 14,
             vertical: 10,
@@ -230,12 +268,8 @@ class _ChatScreenState extends State<ChatScreen> {
             borderRadius: BorderRadius.only(
               topLeft: const Radius.circular(18),
               topRight: const Radius.circular(18),
-              bottomLeft: Radius.circular(
-                isMine ? 18 : 4,
-              ),
-              bottomRight: Radius.circular(
-                isMine ? 4 : 18,
-              ),
+              bottomLeft: Radius.circular(isMine ? 18 : 4),
+              bottomRight: Radius.circular(isMine ? 4 : 18),
             ),
           ),
           child: Column(
@@ -243,9 +277,7 @@ class _ChatScreenState extends State<ChatScreen> {
             children: [
               if (!isMine)
                 Padding(
-                  padding: const EdgeInsets.only(
-                    bottom: 4,
-                  ),
+                  padding: const EdgeInsets.only(bottom: 4),
                   child: Text(
                     name,
                     style: TextStyle(
@@ -284,6 +316,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  // หน้าจอเมื่อไม่มีข้อความ
   Widget _buildEmptyState(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
@@ -327,16 +360,12 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  // ช่องพิมพ์ข้อความ
   Widget _buildInputArea(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(
-        12,
-        8,
-        12,
-        12,
-      ),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       decoration: BoxDecoration(
         color: colorScheme.surface,
         boxShadow: [
@@ -447,9 +476,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
                 Text(
                   'พูดคุยกับเพื่อน ๆ',
-                  style: TextStyle(
-                    fontSize: 11,
-                  ),
+                  style: TextStyle(fontSize: 11),
                 ),
               ],
             ),
@@ -459,13 +486,16 @@ class _ChatScreenState extends State<ChatScreen> {
       body: Column(
         children: [
           Expanded(
-            child: StreamBuilder<
-                QuerySnapshot<Map<String, dynamic>>>(
-              stream: _messagesRef
-                  .orderBy('createdAt')
-                  .snapshots(),
+            child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: _messagesRef.orderBy('createdAt').snapshots(),
               builder: (context, snapshot) {
+                // จัดการ Error ตอนโหลดข้อความ
                 if (snapshot.hasError) {
+                  final errorMessage = _getErrorMessage(
+                    snapshot.error!,
+                    action: 'โหลดข้อความ',
+                  );
+
                   return Center(
                     child: Padding(
                       padding: const EdgeInsets.all(24),
@@ -486,9 +516,16 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            '${snapshot.error}',
+                            errorMessage,
                             textAlign: TextAlign.center,
-                            style: const TextStyle(fontSize: 12),
+                          ),
+                          const SizedBox(height: 16),
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              setState(() {});
+                            },
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('ลองอีกครั้ง'),
                           ),
                         ],
                       ),
@@ -496,8 +533,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   );
                 }
 
-                if (snapshot.connectionState ==
-                    ConnectionState.waiting) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(
                     child: CircularProgressIndicator(),
                   );
@@ -511,12 +547,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
                 return ListView.builder(
                   controller: _scrollController,
-                  padding: const EdgeInsets.fromLTRB(
-                    14,
-                    16,
-                    14,
-                    20,
-                  ),
+                  padding: const EdgeInsets.fromLTRB(14, 16, 14, 20),
                   itemCount: docs.length,
                   itemBuilder: (context, index) {
                     return _buildMessageBubble(

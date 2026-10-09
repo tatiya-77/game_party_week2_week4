@@ -1,14 +1,19 @@
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
+import 'private_chat_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
     super.key,
     required this.onBack,
+    this.userId,
   });
 
   final VoidCallback onBack;
+  final String? userId;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -21,15 +26,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _isEditing = false;
   bool _isSaving = false;
   bool _isPrivate = false;
+  bool _isLoading = true;
+
+  String _displayName = 'ผู้เล่น';
+  String _email = '';
+  String _bio = '';
+
+  FirebaseFirestore get _db => FirebaseFirestore.instance;
+
+  String? get _currentUid => FirebaseAuth.instance.currentUser?.uid;
+
+  String? get _targetUid => widget.userId ?? _currentUid;
+
+  bool get _isOwnProfile =>
+      _currentUid != null && _currentUid == _targetUid;
+
+  DocumentReference<Map<String, dynamic>> get _userRef =>
+      _db.collection('users').doc(_targetUid);
 
   @override
   void initState() {
     super.initState();
-
-    final user = FirebaseAuth.instance.currentUser;
-
-    _nameController.text = user?.displayName ?? '';
-
     _loadProfile();
   }
 
@@ -40,748 +57,622 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.dispose();
   }
 
-  // ============================================================
-  // โหลดข้อมูล Profile จาก Firestore
-  // ============================================================
-
   Future<void> _loadProfile() async {
-    final user = FirebaseAuth.instance.currentUser;
+    final uid = _targetUid;
 
-    if (user == null) return;
-
-    try {
-      final doc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-
-      if (!mounted) return;
-
-      if (doc.exists) {
-        final data = doc.data() ?? {};
-
-        setState(() {
-          _nameController.text =
-              data['displayName'] ??
-              user.displayName ??
-              '';
-
-          _bioController.text =
-              data['bio'] ?? '';
-
-          _isPrivate =
-              data['isPrivate'] ?? false;
-        });
-      }
-    } catch (_) {
-      // หากโหลด Firestore ไม่สำเร็จ
-      // ยังคงใช้ข้อมูลจาก Firebase Authentication ได้
-    }
-  }
-
-  // ============================================================
-  // บันทึก Profile
-  // ============================================================
-
-  Future<void> _saveProfile() async {
-    final user = FirebaseAuth.instance.currentUser;
-
-    if (user == null) return;
-
-    final name = _nameController.text.trim();
-    final bio = _bioController.text.trim();
-
-    if (name.isEmpty) {
-      _showMessage(
-        'กรุณากรอกชื่อที่แสดง',
-        isError: true,
-      );
-      return;
-    }
-
-    if (name.length < 2) {
-      _showMessage(
-        'ชื่อที่แสดงควรมีอย่างน้อย 2 ตัวอักษร',
-        isError: true,
-      );
-      return;
-    }
-
-    setState(() {
-      _isSaving = true;
-    });
-
-    try {
-      // Firebase Authentication
-      await user.updateDisplayName(name);
-
-      // Firestore
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .set(
-        {
-          'uid': user.uid,
-          'displayName': name,
-          'email': user.email ?? '',
-          'bio': bio,
-          'isPrivate': _isPrivate,
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
-
-      if (!mounted) return;
-
-      setState(() {
-        _isEditing = false;
-      });
-
-      _showMessage(
-        'บันทึกข้อมูลเรียบร้อยแล้ว',
-        isError: false,
-      );
-    } catch (_) {
-      if (!mounted) return;
-
-      _showMessage(
-        'ไม่สามารถบันทึกข้อมูลได้',
-        isError: true,
-      );
-    } finally {
+    if (uid == null || uid.isEmpty) {
       if (mounted) {
-        setState(() {
-          _isSaving = false;
-        });
+        setState(() => _isLoading = false);
       }
+      return;
     }
-  }
-
-  // ============================================================
-  // เปลี่ยน Public / Private
-  // ============================================================
-
-  Future<void> _changePrivacy(bool value) async {
-    final user = FirebaseAuth.instance.currentUser;
-
-    if (user == null) return;
-
-    setState(() {
-      _isPrivate = value;
-    });
 
     try {
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .set(
-        {
-          'isPrivate': value,
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
+      final doc = await _userRef.get();
+      final data = doc.data() ?? {};
+
+      final authUser = _isOwnProfile
+          ? FirebaseAuth.instance.currentUser
+          : null;
 
       if (!mounted) return;
 
-      _showMessage(
-        value
-            ? 'เปลี่ยนโปรไฟล์เป็นส่วนตัวแล้ว'
-            : 'เปลี่ยนโปรไฟล์เป็นสาธารณะแล้ว',
-        isError: false,
-      );
+      setState(() {
+        _displayName = (data['displayName'] ??
+                authUser?.displayName ??
+                'ผู้เล่น')
+            .toString();
+
+        _email = _isOwnProfile
+            ? (data['email'] ?? authUser?.email ?? '').toString()
+            : '';
+
+        _bio = (data['bio'] ?? '').toString();
+        _isPrivate = data['isPrivate'] == true;
+
+        _nameController.text = _displayName;
+        _bioController.text = _bio;
+        _isLoading = false;
+      });
     } catch (_) {
       if (!mounted) return;
 
       setState(() {
-        _isPrivate = !value;
+        _displayName =
+            FirebaseAuth.instance.currentUser?.displayName ?? 'ผู้เล่น';
+        _nameController.text = _displayName;
+        _isLoading = false;
       });
 
-      _showMessage(
-        'ไม่สามารถเปลี่ยนการตั้งค่าได้',
-        isError: true,
-      );
+      _showMessage('โหลดข้อมูลโปรไฟล์ได้ไม่ครบ', isError: true);
     }
   }
 
-  // ============================================================
-  // Logout
-  // ============================================================
-
-  Future<void> _logout() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('ออกจากระบบ'),
-          content: const Text(
-            'คุณต้องการออกจากระบบใช่หรือไม่?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () =>
-                  Navigator.pop(context, false),
-              child: const Text('ยกเลิก'),
-            ),
-            FilledButton(
-              onPressed: () =>
-                  Navigator.pop(context, true),
-              child: const Text('ออกจากระบบ'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (confirmed != true) return;
-
-    await FirebaseAuth.instance.signOut();
-  }
-
-  // ============================================================
-  // Message
-  // ============================================================
-
-  void _showMessage(
-    String message, {
-    required bool isError,
-  }) {
+  void _showMessage(String message, {required bool isError}) {
     if (!mounted) return;
 
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
         behavior: SnackBarBehavior.floating,
         backgroundColor:
             isError ? Colors.red.shade700 : Colors.green.shade700,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-        ),
-        margin: const EdgeInsets.all(16),
       ),
     );
   }
 
-  // ============================================================
-  // Build
-  // ============================================================
+  Future<void> _saveProfile() async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null || !_isOwnProfile) return;
+
+    final name = _nameController.text.trim();
+    final bio = _bioController.text.trim();
+
+    if (name.length < 2) {
+      _showMessage('ชื่อที่แสดงต้องมีอย่างน้อย 2 ตัวอักษร',
+          isError: true);
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    try {
+      await user.updateDisplayName(name);
+
+      await _userRef.set({
+        'uid': user.uid,
+        'displayName': name,
+        'email': user.email ?? '',
+        'bio': bio,
+        'isPrivate': _isPrivate,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      if (!mounted) return;
+
+      setState(() {
+        _displayName = name;
+        _bio = bio;
+        _isEditing = false;
+      });
+
+      _showMessage('บันทึกโปรไฟล์เรียบร้อยแล้ว', isError: false);
+    } on FirebaseException catch (e) {
+      if (mounted) {
+        _showMessage('บันทึกไม่สำเร็จ (${e.code})', isError: true);
+      }
+    } catch (_) {
+      if (mounted) {
+        _showMessage('บันทึกโปรไฟล์ไม่สำเร็จ', isError: true);
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _changePrivacy(bool value) async {
+    if (!_isOwnProfile) return;
+
+    final oldValue = _isPrivate;
+    setState(() => _isPrivate = value);
+
+    try {
+      await _userRef.set({
+        'uid': _targetUid,
+        'isPrivate': value,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      if (mounted) {
+        _showMessage(
+          value ? 'ตั้งค่าโปรไฟล์ส่วนตัวแล้ว' : 'ตั้งค่าโปรไฟล์สาธารณะแล้ว',
+          isError: false,
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() => _isPrivate = oldValue);
+      _showMessage('เปลี่ยนการตั้งค่าไม่สำเร็จ', isError: true);
+    }
+  }
+
+  Future<void> _toggleFollow(bool isFollowing) async {
+    final currentUid = _currentUid;
+    final targetUid = _targetUid;
+
+    if (currentUid == null || targetUid == null) {
+      _showMessage('กรุณาเข้าสู่ระบบก่อนติดตาม', isError: true);
+      return;
+    }
+
+    if (currentUid == targetUid) return;
+
+    final followerRef = _userRef
+        .collection('followers')
+        .doc(currentUid);
+
+    final followingRef = _db
+        .collection('users')
+        .doc(currentUid)
+        .collection('following')
+        .doc(targetUid);
+
+    try {
+      final batch = _db.batch();
+
+      if (isFollowing) {
+        batch.delete(followerRef);
+        batch.delete(followingRef);
+      } else {
+        batch.set(followerRef, {
+          'uid': currentUid,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+
+        batch.set(followingRef, {
+          'uid': targetUid,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      await batch.commit();
+
+      if (mounted) {
+        _showMessage(
+          isFollowing ? 'เลิกติดตามแล้ว' : 'ติดตามแล้ว',
+          isError: false,
+        );
+      }
+    } on FirebaseException catch (e) {
+      if (mounted) {
+        _showMessage(
+          'ดำเนินการไม่สำเร็จ (${e.code}) ตรวจสอบ Firestore Rules',
+          isError: true,
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        _showMessage('ดำเนินการไม่สำเร็จ กรุณาลองใหม่', isError: true);
+      }
+    }
+  }
+
+  Future<void> _openPrivateChat() async {
+    final uid = _targetUid;
+    if (uid == null || _currentUid == null || uid == _currentUid) return;
+
+    if (_isPrivate) {
+      _showMessage(
+        'โปรไฟล์นี้ตั้งค่าเป็นส่วนตัว อาจต้องได้รับอนุญาตก่อนติดต่อ',
+        isError: true,
+      );
+      return;
+    }
+
+    if (!mounted) return;
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PrivateChatScreen(
+          peerUid: uid,
+          peerName: _displayName,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _logout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('ออกจากระบบ'),
+        content: const Text('ต้องการออกจากระบบใช่หรือไม่?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('ยกเลิก'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('ออกจากระบบ'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    await FirebaseAuth.instance.signOut();
+
+    if (mounted) widget.onBack();
+  }
+
+  Widget _countStream(String subcollection, String label) {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _userRef.collection(subcollection).snapshots(),
+      builder: (context, snapshot) {
+        final count = snapshot.data?.docs.length ?? 0;
+
+        return Column(
+          children: [
+            Text(
+              '$count',
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 19,
+              ),
+            ),
+            Text(label, style: const TextStyle(color: Colors.grey)),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _followButton() {
+    final currentUid = _currentUid;
+    final targetUid = _targetUid;
+
+    if (currentUid == null || targetUid == null || currentUid == targetUid) {
+      return const SizedBox.shrink();
+    }
+
+    final followerRef = _userRef.collection('followers').doc(currentUid);
+
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: followerRef.snapshots(),
+      builder: (context, snapshot) {
+        final isFollowing = snapshot.data?.exists ?? false;
+
+        return SizedBox(
+          height: 46,
+          child: FilledButton.icon(
+            onPressed: snapshot.connectionState == ConnectionState.waiting
+                ? null
+                : () => _toggleFollow(isFollowing),
+            icon: Icon(
+              isFollowing ? Icons.person_remove_alt_1 : Icons.person_add_alt_1,
+            ),
+            label: Text(isFollowing ? 'เลิกติดตาม' : 'ติดตาม'),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPosts() {
+    final uid = _targetUid;
+
+    if (uid == null) {
+      return const Center(child: Text('ไม่พบผู้ใช้'));
+    }
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _db
+          .collection('posts')
+          .where('uid', isEqualTo: uid)
+          .orderBy('createdAt', descending: true)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return const Padding(
+            padding: EdgeInsets.all(20),
+            child: Text(
+              'โหลดโพสต์ไม่สำเร็จ หากมีข้อความแจ้งสร้าง Index ให้สร้าง Index ใน Firebase Console',
+              textAlign: TextAlign.center,
+            ),
+          );
+        }
+
+        if (!snapshot.hasData) {
+          return const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final posts = snapshot.data!.docs;
+
+        if (posts.isEmpty) {
+          return const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: Text('ผู้เล่นคนนี้ยังไม่มีโพสต์')),
+          );
+        }
+
+        return ListView.builder(
+          itemCount: posts.length,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemBuilder: (context, index) {
+            final data = posts[index].data();
+            final imageUrl = (data['imageUrl'] ?? '').toString();
+
+            return Card(
+              margin: const EdgeInsets.only(bottom: 12),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ListTile(
+                    leading: const CircleAvatar(
+                      child: Icon(Icons.sports_esports),
+                    ),
+                    title: Text(
+                      (data['title'] ?? 'โพสต์').toString(),
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: Text((data['game'] ?? '').toString()),
+                  ),
+                  if (imageUrl.isNotEmpty)
+                    Image.network(
+                      imageUrl,
+                      width: double.infinity,
+                      height: 190,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) =>
+                          const SizedBox.shrink(),
+                    ),
+                  if ((data['detail'] ?? '').toString().isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(data['detail'].toString()),
+                    ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-
-    final displayName =
-        _nameController.text.trim().isEmpty
-            ? 'ผู้เล่น'
-            : _nameController.text.trim();
-
-    final email = user?.email ?? '';
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
           onPressed: widget.onBack,
-          icon: const Icon(
-            Icons.arrow_back_rounded,
-          ),
+          icon: const Icon(Icons.arrow_back_rounded),
         ),
-        title: const Text(
-          'โปรไฟล์',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+        title: Text(_isOwnProfile ? 'โปรไฟล์ของฉัน' : 'โปรไฟล์ผู้เล่น'),
         actions: [
-          if (!_isEditing)
+          if (_isOwnProfile && !_isEditing)
             IconButton(
               tooltip: 'แก้ไขโปรไฟล์',
-              onPressed: () {
-                setState(() {
-                  _isEditing = true;
-                });
-              },
-              icon: const Icon(
-                Icons.edit_outlined,
-              ),
+              onPressed: () => setState(() => _isEditing = true),
+              icon: const Icon(Icons.edit_outlined),
             ),
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(
-          16,
-          10,
-          16,
-          40,
-        ),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 36),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // ==================================================
-            // Profile Header
-            // ==================================================
-
             Container(
-              width: double.infinity,
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    Color(0xFF6C63FF),
-                    Color(0xFF8E7CFF),
-                  ],
+                  colors: [Color(0xFF6C63FF), Color(0xFF8E7CFF)],
                 ),
                 borderRadius: BorderRadius.circular(24),
               ),
               child: Column(
                 children: [
-                  Container(
-                    width: 92,
-                    height: 92,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: Colors.white,
-                        width: 4,
-                      ),
-                    ),
-                    child: const Icon(
+                  const CircleAvatar(
+                    radius: 43,
+                    backgroundColor: Colors.white,
+                    child: Icon(
                       Icons.person_rounded,
                       size: 52,
                       color: Color(0xFF6C63FF),
                     ),
                   ),
-
-                  const SizedBox(height: 14),
-
+                  const SizedBox(height: 12),
                   Text(
-                    displayName,
+                    _displayName,
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 24,
+                      fontSize: 23,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-
-                  const SizedBox(height: 4),
-
+                  if (_isOwnProfile && _email.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      _email,
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
                   Text(
-                    email,
-                    style: TextStyle(
-                      color: Colors.white.withValues(
-                        alpha: 0.85,
-                      ),
-                      fontSize: 13,
-                    ),
+                    _isPrivate ? '🔒 โปรไฟล์ส่วนตัว' : '🌐 โปรไฟล์สาธารณะ',
+                    style: const TextStyle(color: Colors.white),
                   ),
-
-                  const SizedBox(height: 14),
-
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(
-                        alpha: 0.18,
-                      ),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _isPrivate
-                              ? Icons.lock_outline
-                              : Icons.public,
-                          color: Colors.white,
-                          size: 16,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          _isPrivate
-                              ? 'โปรไฟล์ส่วนตัว'
-                              : 'โปรไฟล์สาธารณะ',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
+                  const SizedBox(height: 18),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _countStream('followers', 'ผู้ติดตาม'),
+                      _countStream('following', 'กำลังติดตาม'),
+                    ],
                   ),
                 ],
               ),
             ),
-
-            const SizedBox(height: 16),
-
-            // ==================================================
-            // Edit Profile
-            // ==================================================
-
-            if (_isEditing)
-              _buildEditProfileCard()
-            else
-              _buildProfileInfoCard(),
-
             const SizedBox(height: 14),
 
-            // ==================================================
-            // Privacy
-            // ==================================================
-
-            _buildPrivacyCard(),
-
-            const SizedBox(height: 14),
-
-            // ==================================================
-            // Account
-            // ==================================================
-
-            _buildAccountCard(),
-
-            const SizedBox(height: 20),
-
-            // ==================================================
-            // Logout
-            // ==================================================
-
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: OutlinedButton.icon(
-                onPressed:
-                    _isSaving ? null : _logout,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.red,
-                  side: BorderSide(
-                    color: Colors.red.shade200,
+            if (!_isOwnProfile) ...[
+              Row(
+                children: [
+                  Expanded(child: _followButton()),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _openPrivateChat,
+                      icon: const Icon(Icons.chat_bubble_outline),
+                      label: const Text('แชต'),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(46),
+                      ),
+                    ),
                   ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(15),
-                  ),
-                ),
-                icon: const Icon(
-                  Icons.logout_rounded,
-                ),
-                label: const Text(
-                  'ออกจากระบบ',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                ],
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+              const SizedBox(height: 14),
+            ],
 
-  // ============================================================
-  // Profile Info Card
-  // ============================================================
-
-  Widget _buildProfileInfoCard() {
-    final bio = _bioController.text.trim();
-
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'เกี่ยวกับฉัน',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-
-            const SizedBox(height: 12),
-
-            if (bio.isEmpty)
-              const Text(
-                'ยังไม่ได้เพิ่มข้อมูลเกี่ยวกับตัวเอง',
-                style: TextStyle(
-                  color: Colors.grey,
+            if (_isOwnProfile && _isEditing)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                    children: [
+                      TextField(
+                        controller: _nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'ชื่อที่แสดง',
+                          prefixIcon: Icon(Icons.person_outline),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _bioController,
+                        maxLines: 4,
+                        decoration: const InputDecoration(
+                          labelText: 'เกี่ยวกับฉัน',
+                          hintText: 'บอกคนอื่นเกี่ยวกับตัวคุณ',
+                          alignLabelWithHint: true,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: _isSaving
+                                  ? null
+                                  : () {
+                                      setState(() {
+                                        _nameController.text = _displayName;
+                                        _bioController.text = _bio;
+                                        _isEditing = false;
+                                      });
+                                    },
+                              child: const Text('ยกเลิก'),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: _isSaving ? null : _saveProfile,
+                              child: Text(
+                                _isSaving ? 'กำลังบันทึก...' : 'บันทึก',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               )
             else
-              Text(
-                bio,
-                style: const TextStyle(
-                  height: 1.5,
-                ),
-              ),
-
-            const SizedBox(height: 16),
-
-            const Divider(),
-
-            const SizedBox(height: 10),
-
-            _InfoRow(
-              icon: Icons.email_outlined,
-              title: 'อีเมล',
-              value:
-                  FirebaseAuth.instance.currentUser?.email ??
-                      '-',
-            ),
-
-            const SizedBox(height: 12),
-
-            _InfoRow(
-              icon: Icons.verified_user_outlined,
-              title: 'สถานะ',
-              value: 'สมาชิก Game Party',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ============================================================
-  // Edit Profile Card
-  // ============================================================
-
-  Widget _buildEditProfileCard() {
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'แก้ไขโปรไฟล์',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-
-            const SizedBox(height: 18),
-
-            TextField(
-              controller: _nameController,
-              decoration: const InputDecoration(
-                labelText: 'ชื่อที่แสดง',
-                prefixIcon: Icon(
-                  Icons.person_outline,
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 14),
-
-            TextField(
-              controller: _bioController,
-              maxLines: 4,
-              decoration: const InputDecoration(
-                labelText: 'เกี่ยวกับฉัน',
-                hintText:
-                    'เช่น ชอบเล่นเกมแนว FPS...',
-                prefixIcon: Icon(
-                  Icons.edit_note_rounded,
-                ),
-                alignLabelWithHint: true,
-              ),
-            ),
-
-            const SizedBox(height: 18),
-
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _isSaving
-                        ? null
-                        : () {
-                            setState(() {
-                              _isEditing = false;
-                            });
-                          },
-                    child: const Text('ยกเลิก'),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'เกี่ยวกับฉัน',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 17,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _bio.isEmpty ? 'ยังไม่ได้เพิ่มข้อมูลเกี่ยวกับตัวเอง' : _bio,
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed:
-                        _isSaving ? null : _saveProfile,
-                    icon: _isSaving
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child:
-                                CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(
-                            Icons.save_outlined,
-                          ),
-                    label: Text(
-                      _isSaving
-                          ? 'กำลังบันทึก...'
-                          : 'บันทึก',
-                    ),
+              ),
+
+            if (_isOwnProfile) ...[
+              const SizedBox(height: 12),
+              Card(
+                child: SwitchListTile(
+                  secondary: Icon(
+                    _isPrivate ? Icons.lock_outline : Icons.public,
+                    color: const Color(0xFF6C63FF),
                   ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ============================================================
-  // Privacy Card
-  // ============================================================
-
-  Widget _buildPrivacyCard() {
-    return Card(
-      margin: EdgeInsets.zero,
-      child: SwitchListTile(
-        contentPadding:
-            const EdgeInsets.symmetric(
-          horizontal: 20,
-          vertical: 4,
-        ),
-        secondary: Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: const Color(0xFF6C63FF).withValues(
-              alpha: 0.10,
-            ),
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: Icon(
-            _isPrivate
-                ? Icons.lock_outline
-                : Icons.public,
-            color: const Color(0xFF6C63FF),
-          ),
-        ),
-        title: const Text(
-          'โปรไฟล์ส่วนตัว',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        subtitle: Text(
-          _isPrivate
-              ? 'เฉพาะผู้ที่ได้รับอนุญาตเท่านั้น'
-              : 'ผู้ใช้คนอื่นสามารถดูโปรไฟล์ได้',
-          style: const TextStyle(
-            fontSize: 12,
-            color: Colors.grey,
-          ),
-        ),
-        value: _isPrivate,
-        onChanged:
-            _isSaving ? null : _changePrivacy,
-      ),
-    );
-  }
-
-  // ============================================================
-  // Account Card
-  // ============================================================
-
-  Widget _buildAccountCard() {
-    return Card(
-      margin: EdgeInsets.zero,
-      child: ListTile(
-        leading: const Icon(
-          Icons.security_outlined,
-        ),
-        title: const Text(
-          'บัญชีและความปลอดภัย',
-          style: TextStyle(
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        subtitle: const Text(
-          'จัดการข้อมูลบัญชีของคุณ',
-          style: TextStyle(fontSize: 12),
-        ),
-        trailing: const Icon(
-          Icons.chevron_right_rounded,
-        ),
-        onTap: () {
-          _showMessage(
-            'ฟังก์ชันจัดการบัญชีเพิ่มเติมจะเพิ่มในขั้นต่อไป',
-            isError: false,
-          );
-        },
-      ),
-    );
-  }
-}
-
-// ============================================================
-// Info Row
-// ============================================================
-
-class _InfoRow extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String value;
-
-  const _InfoRow({
-    required this.icon,
-    required this.title,
-    required this.value,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(
-          icon,
-          size: 21,
-          color: const Color(0xFF6C63FF),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment:
-                CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey,
+                  title: const Text(
+                    'โปรไฟล์ส่วนตัว',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text(
+                    _isPrivate
+                        ? 'เปิดใช้งานโปรไฟล์ส่วนตัว'
+                        : 'ผู้ใช้คนอื่นสามารถดูโปรไฟล์ได้',
+                  ),
+                  value: _isPrivate,
+                  onChanged: _changePrivacy,
                 ),
               ),
-              const SizedBox(height: 2),
-              Text(
-                value,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w500,
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: _logout,
+                icon: const Icon(Icons.logout, color: Colors.red),
+                label: const Text(
+                  'ออกจากระบบ',
+                  style: TextStyle(color: Colors.red),
                 ),
               ),
             ],
-          ),
+
+            const SizedBox(height: 18),
+            const Text(
+              'โพสต์ของผู้เล่น',
+              style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+            _buildPosts(),
+          ],
         ),
-      ],
+      ),
     );
   }
 }

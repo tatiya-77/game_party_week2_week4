@@ -1,3 +1,4 @@
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -25,6 +26,10 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
+  // ============================================================
+  // เข้าสู่ระบบ / สมัครสมาชิก
+  // ============================================================
+
   Future<void> _submit() async {
     final email = _email.text.trim();
     final password = _password.text;
@@ -37,6 +42,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (_isRegister && displayName.isEmpty) {
       _showMessage('กรุณากรอกชื่อที่แสดง');
+      return;
+    }
+
+    if (_isRegister && displayName.length < 2) {
+      _showMessage('ชื่อที่แสดงควรมีอย่างน้อย 2 ตัวอักษร');
       return;
     }
 
@@ -55,9 +65,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
         await credential.user?.updateDisplayName(displayName);
 
-        if (mounted) {
-          _showMessage('สมัครสมาชิกสำเร็จ 🎉');
-        }
+        if (!mounted) return;
+
+        _showMessage('สมัครสมาชิกสำเร็จ 🎉');
       } else {
         await auth.signInWithEmailAndPassword(
           email: email,
@@ -95,12 +105,20 @@ class _LoginScreenState extends State<LoginScreen> {
           message = 'ไม่สามารถเชื่อมต่ออินเทอร์เน็ตได้';
           break;
 
+        case 'too-many-requests':
+          message = 'ดำเนินการบ่อยเกินไป กรุณารอสักครู่';
+          break;
+
+        case 'operation-not-allowed':
+          message = 'กรุณาเปิดใช้งาน Email/Password ใน Firebase';
+          break;
+
         default:
           message = e.message ?? 'ดำเนินการไม่สำเร็จ';
       }
 
       _showMessage(message);
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
         _showMessage('เกิดข้อผิดพลาด กรุณาลองใหม่');
       }
@@ -113,6 +131,80 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  // ============================================================
+  // ลืมรหัสผ่าน
+  // ============================================================
+
+  Future<void> _resetPassword() async {
+    final email = _email.text.trim();
+
+    if (email.isEmpty) {
+      _showMessage('กรุณากรอกอีเมลก่อนรีเซ็ตรหัสผ่าน');
+      return;
+    }
+
+    setState(() {
+      _isBusy = true;
+    });
+
+    try {
+      await FirebaseAuth.instance.sendPasswordResetEmail(
+        email: email,
+      );
+
+      if (!mounted) return;
+
+      _showMessage(
+        'หากอีเมลนี้ลงทะเบียนไว้ คุณจะได้รับลิงก์รีเซ็ตรหัสผ่าน กรุณาตรวจสอบกล่องจดหมายและ Spam',
+      );
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+
+      String message;
+
+      switch (e.code) {
+        case 'invalid-email':
+          message = 'รูปแบบอีเมลไม่ถูกต้อง';
+          break;
+
+        case 'user-not-found':
+          message = 'ไม่พบบัญชีที่ใช้อีเมลนี้';
+          break;
+
+        case 'too-many-requests':
+          message = 'ส่งคำขอบ่อยเกินไป กรุณารอสักครู่';
+          break;
+
+        case 'network-request-failed':
+          message = 'เชื่อมต่ออินเทอร์เน็ตไม่ได้';
+          break;
+
+        case 'operation-not-allowed':
+          message = 'กรุณาตรวจสอบการตั้งค่า Email/Password ใน Firebase';
+          break;
+
+        default:
+          message = 'ส่งลิงก์รีเซ็ตรหัสผ่านไม่สำเร็จ กรุณาลองใหม่';
+      }
+
+      _showMessage(message);
+    } catch (_) {
+      if (mounted) {
+        _showMessage('เกิดข้อผิดพลาด กรุณาลองใหม่');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isBusy = false;
+        });
+      }
+    }
+  }
+
+  // ============================================================
+  // แสดงข้อความ
+  // ============================================================
+
   void _showMessage(String message) {
     if (!mounted) return;
 
@@ -122,12 +214,17 @@ class _LoginScreenState extends State<LoginScreen> {
         SnackBar(
           content: Text(message),
           behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
         ),
       );
   }
+
+  // ============================================================
+  // หน้าจอ
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
@@ -145,9 +242,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               child: Column(
                 children: [
-                  // =====================================================
                   // Logo
-                  // =====================================================
                   Container(
                     width: 86,
                     height: 86,
@@ -173,9 +268,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                   const SizedBox(height: 20),
 
-                  // =====================================================
                   // Title
-                  // =====================================================
                   Text(
                     'Game Party',
                     style: theme.textTheme.headlineMedium?.copyWith(
@@ -199,9 +292,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                   const SizedBox(height: 28),
 
-                  // =====================================================
                   // Login Card
-                  // =====================================================
                   Card(
                     elevation: 0,
                     color: Colors.white,
@@ -214,9 +305,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Text(
-                            _isRegister
-                                ? 'สมัครสมาชิก'
-                                : 'เข้าสู่ระบบ',
+                            _isRegister ? 'สมัครสมาชิก' : 'เข้าสู่ระบบ',
                             style: theme.textTheme.titleLarge?.copyWith(
                               fontWeight: FontWeight.bold,
                             ),
@@ -224,9 +313,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                           const SizedBox(height: 20),
 
-                          // =================================================
                           // Display Name
-                          // =================================================
                           if (_isRegister) ...[
                             TextField(
                               controller: _displayName,
@@ -245,17 +332,15 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                               ),
                             ),
-
                             const SizedBox(height: 14),
                           ],
 
-                          // =================================================
                           // Email
-                          // =================================================
                           TextField(
                             controller: _email,
                             keyboardType: TextInputType.emailAddress,
                             textInputAction: TextInputAction.next,
+                            autocorrect: false,
                             decoration: InputDecoration(
                               labelText: 'อีเมล',
                               hintText: 'example@email.com',
@@ -273,9 +358,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                           const SizedBox(height: 14),
 
-                          // =================================================
                           // Password
-                          // =================================================
                           TextField(
                             controller: _password,
                             obscureText: _obscurePassword,
@@ -294,8 +377,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               suffixIcon: IconButton(
                                 onPressed: () {
                                   setState(() {
-                                    _obscurePassword =
-                                        !_obscurePassword;
+                                    _obscurePassword = !_obscurePassword;
                                   });
                                 },
                                 icon: Icon(
@@ -313,29 +395,40 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
 
-                          const SizedBox(height: 22),
+                          // Forgot Password
+                          if (!_isRegister)
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton(
+                                onPressed: _isBusy ? null : _resetPassword,
+                                child: const Text(
+                                  'ลืมรหัสผ่าน?',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF6C63FF),
+                                  ),
+                                ),
+                              ),
+                            ),
 
-                          // =================================================
+                          const SizedBox(height: 14),
+
                           // Submit Button
-                          // =================================================
                           SizedBox(
                             height: 52,
                             child: FilledButton(
                               onPressed: _isBusy ? null : _submit,
                               style: FilledButton.styleFrom(
-                                backgroundColor:
-                                    const Color(0xFF6C63FF),
+                                backgroundColor: const Color(0xFF6C63FF),
                                 shape: RoundedRectangleBorder(
-                                  borderRadius:
-                                      BorderRadius.circular(16),
+                                  borderRadius: BorderRadius.circular(16),
                                 ),
                               ),
                               child: _isBusy
                                   ? const SizedBox(
                                       width: 22,
                                       height: 22,
-                                      child:
-                                          CircularProgressIndicator(
+                                      child: CircularProgressIndicator(
                                         strokeWidth: 2.5,
                                         color: Colors.white,
                                       ),
@@ -354,9 +447,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                           const SizedBox(height: 10),
 
-                          // =================================================
                           // Switch Login/Register
-                          // =================================================
                           TextButton(
                             onPressed: _isBusy
                                 ? null

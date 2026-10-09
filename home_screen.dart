@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../services/cloudinary_service.dart';
+import '../services/local_database_service.dart';
 import 'chat_screen.dart';
 import 'profile_screen.dart';
 
@@ -19,6 +20,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _postsRef = FirebaseFirestore.instance.collection('posts');
 
   int _currentPage = 0;
+  String _lastCachedPostSignature = '';
 
   @override
   void dispose() {
@@ -162,10 +164,17 @@ class _HomeScreenState extends State<HomeScreen> {
                             onPressed: isUploading
                                 ? null
                                 : () async {
-                                    final image =
-                                        await ImagePicker().pickImage(
-                                      source: ImageSource.gallery,
-                                    );
+                                    XFile? image;
+                                    try {
+                                      image = await ImagePicker().pickImage(
+                                        source: ImageSource.gallery,
+                                      );
+                                    } catch (_) {
+                                      if (mounted) {
+                                        _showMessage('ไม่สามารถเปิดแกลเลอรีได้', isError: true);
+                                      }
+                                      return;
+                                    }
 
                                     if (image == null) return;
 
@@ -182,6 +191,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                         imageUrl = uploadedUrl;
                                         isUploading = false;
                                       });
+                                      if (uploadedUrl == null && mounted) {
+                                        _showMessage('อัปโหลดรูปไม่สำเร็จ กรุณาลองใหม่', isError: true);
+                                      }
                                     } catch (e) {
                                       setDialogState(() {
                                         isUploading = false;
@@ -256,31 +268,34 @@ class _HomeScreenState extends State<HomeScreen> {
       final user = FirebaseAuth.instance.currentUser;
 
       if (user == null) {
+        _showMessage('กรุณาเข้าสู่ระบบก่อนสร้างโพสต์', isError: true);
         titleController.dispose();
         detailController.dispose();
         return;
       }
 
-      await _postsRef.add({
-        'uid': user.uid,
-        'userName':
-            user.displayName ?? user.email ?? 'ผู้เล่น',
-        'game': selectedGame,
-        'title': titleController.text.trim(),
-        'detail': detailController.text.trim(),
-        'imageUrl': imageUrl,
-        'createdAt': FieldValue.serverTimestamp(),
-
-        // ระบบ Reaction
-        'likes': 0,
-        'dislikes': 0,
-        'likedBy': <String>[],
-        'dislikedBy': <String>[],
-        'reactions': <String, dynamic>{},
-
-        // จำนวน Comment
-        'commentCount': 0,
-      });
+      try {
+        await _postsRef.add({
+          'uid': user.uid,
+          'userName': user.displayName ?? user.email ?? 'ผู้เล่น',
+          'game': selectedGame,
+          'title': titleController.text.trim(),
+          'detail': detailController.text.trim(),
+          'imageUrl': imageUrl,
+          'createdAt': FieldValue.serverTimestamp(),
+          'likes': 0,
+          'dislikes': 0,
+          'likedBy': <String>[],
+          'dislikedBy': <String>[],
+          'reactions': <String, dynamic>{},
+          'commentCount': 0,
+        });
+        _showMessage('สร้างโพสต์เรียบร้อยแล้ว', isError: false);
+      } on FirebaseException catch (e) {
+        _showMessage(_friendlyFirebaseError(e, 'สร้างโพสต์ไม่สำเร็จ'), isError: true);
+      } catch (_) {
+        _showMessage('เกิดข้อผิดพลาดระหว่างสร้างโพสต์ กรุณาลองใหม่', isError: true);
+      }
     }
 
     titleController.dispose();
@@ -296,7 +311,10 @@ class _HomeScreenState extends State<HomeScreen> {
   ) async {
     final user = FirebaseAuth.instance.currentUser;
 
-    if (user == null) return;
+    if (user == null) {
+      _showMessage('กรุณาเข้าสู่ระบบก่อนกดถูกใจ', isError: true);
+      return;
+    }
 
     final data = doc.data() ?? {};
 
@@ -331,7 +349,13 @@ class _HomeScreenState extends State<HomeScreen> {
     updates['likedBy'] = likedBy;
     updates['dislikedBy'] = dislikedBy;
 
-    await doc.reference.update(updates);
+    try {
+      await doc.reference.update(updates);
+    } on FirebaseException catch (e) {
+      _showMessage(_friendlyFirebaseError(e, 'กดถูกใจไม่สำเร็จ'), isError: true);
+    } catch (_) {
+      _showMessage('กดถูกใจไม่สำเร็จ กรุณาลองใหม่', isError: true);
+    }
   }
 
   // ============================================================
@@ -343,7 +367,10 @@ class _HomeScreenState extends State<HomeScreen> {
   ) async {
     final user = FirebaseAuth.instance.currentUser;
 
-    if (user == null) return;
+    if (user == null) {
+      _showMessage('กรุณาเข้าสู่ระบบก่อนกดไม่ถูกใจ', isError: true);
+      return;
+    }
 
     final data = doc.data() ?? {};
 
@@ -380,7 +407,13 @@ class _HomeScreenState extends State<HomeScreen> {
     updates['likedBy'] = likedBy;
     updates['dislikedBy'] = dislikedBy;
 
-    await doc.reference.update(updates);
+    try {
+      await doc.reference.update(updates);
+    } on FirebaseException catch (e) {
+      _showMessage(_friendlyFirebaseError(e, 'บันทึกการไม่ถูกใจไม่สำเร็จ'), isError: true);
+    } catch (_) {
+      _showMessage('บันทึกการไม่ถูกใจไม่สำเร็จ กรุณาลองใหม่', isError: true);
+    }
   }
 
   // ============================================================
@@ -393,7 +426,10 @@ class _HomeScreenState extends State<HomeScreen> {
   ) async {
     final user = FirebaseAuth.instance.currentUser;
 
-    if (user == null) return;
+    if (user == null) {
+      _showMessage('กรุณาเข้าสู่ระบบก่อนส่ง Reaction', isError: true);
+      return;
+    }
 
     final data = doc.data() ?? {};
 
@@ -406,9 +442,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
     reactions[emoji] = currentCount + 1;
 
-    await doc.reference.update({
-      'reactions': reactions,
-    });
+    try {
+      await doc.reference.update({'reactions': reactions});
+      _showMessage('บันทึก Reaction แล้ว', isError: false);
+    } on FirebaseException catch (e) {
+      _showMessage(_friendlyFirebaseError(e, 'บันทึก Reaction ไม่สำเร็จ'), isError: true);
+    } catch (_) {
+      _showMessage('บันทึก Reaction ไม่สำเร็จ กรุณาลองใหม่', isError: true);
+    }
   }
 
   // ============================================================
@@ -653,21 +694,29 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final user = FirebaseAuth.instance.currentUser;
 
-    if (user == null) return;
+    if (user == null) {
+      _showMessage('กรุณาเข้าสู่ระบบก่อนแสดงความคิดเห็น', isError: true);
+      return;
+    }
 
-    await doc.reference.collection('comments').add({
-      'uid': user.uid,
-      'userName':
-          user.displayName ?? user.email ?? 'ผู้เล่น',
-      'text': text,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
-
-    await doc.reference.update({
-      'commentCount': FieldValue.increment(1),
-    });
-
-    controller.clear();
+    try {
+      final batch = FirebaseFirestore.instance.batch();
+      final commentRef = doc.reference.collection('comments').doc();
+      batch.set(commentRef, {
+        'uid': user.uid,
+        'userName': user.displayName ?? user.email ?? 'ผู้เล่น',
+        'text': text,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+      batch.update(doc.reference, {'commentCount': FieldValue.increment(1)});
+      await batch.commit();
+      controller.clear();
+      _showMessage('เพิ่มความคิดเห็นแล้ว', isError: false);
+    } on FirebaseException catch (e) {
+      _showMessage(_friendlyFirebaseError(e, 'ส่งความคิดเห็นไม่สำเร็จ'), isError: true);
+    } catch (_) {
+      _showMessage('ส่งความคิดเห็นไม่สำเร็จ กรุณาลองใหม่', isError: true);
+    }
   }
 
   // ============================================================
@@ -774,23 +823,20 @@ class _HomeScreenState extends State<HomeScreen> {
                       return;
                     }
 
-                    await doc.reference.update({
-                      'game': selectedGame,
-                      'title': title,
-                      'detail':
-                          detailController.text.trim(),
-                      'updatedAt':
-                          FieldValue.serverTimestamp(),
-                    });
-
-                    if (context.mounted) {
-                      Navigator.pop(context);
+                    try {
+                      await doc.reference.update({
+                        'game': selectedGame,
+                        'title': title,
+                        'detail': detailController.text.trim(),
+                        'updatedAt': FieldValue.serverTimestamp(),
+                      });
+                      if (context.mounted) Navigator.pop(context);
+                      _showMessage('แก้ไขโพสต์เรียบร้อยแล้ว', isError: false);
+                    } on FirebaseException catch (e) {
+                      _showMessage(_friendlyFirebaseError(e, 'แก้ไขโพสต์ไม่สำเร็จ'), isError: true);
+                    } catch (_) {
+                      _showMessage('แก้ไขโพสต์ไม่สำเร็จ กรุณาลองใหม่', isError: true);
                     }
-
-                    _showMessage(
-                      'แก้ไขโพสต์เรียบร้อยแล้ว',
-                      isError: false,
-                    );
                   },
                   child: const Text('บันทึก'),
                 ),
@@ -842,12 +888,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (confirmed != true) return;
 
-    await doc.reference.delete();
-
-    _showMessage(
-      'ลบโพสต์เรียบร้อยแล้ว',
-      isError: false,
-    );
+    try {
+      await doc.reference.delete();
+      _showMessage('ลบโพสต์เรียบร้อยแล้ว', isError: false);
+    } on FirebaseException catch (e) {
+      _showMessage(_friendlyFirebaseError(e, 'ลบโพสต์ไม่สำเร็จ'), isError: true);
+    } catch (_) {
+      _showMessage('ลบโพสต์ไม่สำเร็จ กรุณาลองใหม่', isError: true);
+    }
   }
 
   // ============================================================
@@ -946,22 +994,22 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    await FirebaseFirestore.instance
-        .collection('reports')
-        .add({
-      'postId': doc.id,
-      'reportedBy': user.uid,
-      'reason': result,
-      'detail': reasonController.text.trim(),
-      'createdAt': FieldValue.serverTimestamp(),
-    });
-
-    reasonController.dispose();
-
-    _showMessage(
-      'ส่งรายงานเรียบร้อยแล้ว ขอบคุณสำหรับการแจ้งเตือน',
-      isError: false,
-    );
+    try {
+      await FirebaseFirestore.instance.collection('reports').add({
+        'postId': doc.id,
+        'reportedBy': user.uid,
+        'reason': result,
+        'detail': reasonController.text.trim(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+      _showMessage('ส่งรายงานเรียบร้อยแล้ว ขอบคุณสำหรับการแจ้งเตือน', isError: false);
+    } on FirebaseException catch (e) {
+      _showMessage(_friendlyFirebaseError(e, 'ส่งรายงานไม่สำเร็จ'), isError: true);
+    } catch (_) {
+      _showMessage('ส่งรายงานไม่สำเร็จ กรุณาลองใหม่', isError: true);
+    } finally {
+      reasonController.dispose();
+    }
   }
 
   // ============================================================
@@ -1035,6 +1083,24 @@ class _HomeScreenState extends State<HomeScreen> {
   // ============================================================
   // Message
   // ============================================================
+
+  String _friendlyFirebaseError(FirebaseException error, String fallback) {
+    switch (error.code) {
+      case 'permission-denied':
+        return 'ไม่มีสิทธิ์ดำเนินการนี้';
+      case 'unauthenticated':
+        return 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่';
+      case 'unavailable':
+      case 'deadline-exceeded':
+        return 'เชื่อมต่อบริการไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ต';
+      case 'not-found':
+        return 'ไม่พบข้อมูลนี้ อาจถูกลบไปแล้ว';
+      case 'resource-exhausted':
+        return 'ใช้งานบ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่';
+      default:
+        return fallback;
+    }
+  }
 
   void _showMessage(
     String message, {
@@ -1211,13 +1277,10 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                           const SizedBox(height: 6),
-                          Text(
-                            '${snapshot.error}',
+                          const Text(
+                            'กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตแล้วลองอีกครั้ง',
                             textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Colors.grey,
-                              fontSize: 12,
-                            ),
+                            style: TextStyle(color: Colors.grey, fontSize: 12),
                           ),
                         ],
                       ),
@@ -1231,12 +1294,33 @@ class _HomeScreenState extends State<HomeScreen> {
                   );
                 }
 
+                final allPosts = snapshot.data!.docs;
+
+                // Keep a local SQLite copy of the latest feed for persistence.
+                // Firestore remains the source of truth for post actions.
+                final signature = allPosts
+                    .map((doc) => '${doc.id}:${doc.data().toString()}')
+                    .join('|');
+                if (signature != _lastCachedPostSignature) {
+                  _lastCachedPostSignature = signature;
+                  LocalDatabaseService.instance.cachePosts(
+                    allPosts
+                        .map((doc) => {
+                              'id': doc.id,
+                              'data': doc.data(),
+                            })
+                        .toList(),
+                  ).catchError((_) {
+                    // A cache write failure must not break the live feed.
+                  });
+                }
+
                 final query = _searchController.text
                     .toLowerCase()
                     .trim();
 
                 final docs =
-                    snapshot.data!.docs.where((doc) {
+                    allPosts.where((doc) {
                   final data = doc.data();
 
                   final combinedText =
